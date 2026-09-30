@@ -1,6 +1,5 @@
 """
 Q1 - Campus Merit Analyzer using Compound Data Structures
-Python 3.10+
 """
 from collections import defaultdict
 
