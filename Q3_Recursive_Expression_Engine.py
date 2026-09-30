@@ -1,7 +1,5 @@
 """
 Q3 - Recursive Expression Engine with Memoization
-Supports non-negative integer literals, +, -, *, parentheses and variables.
-Python 3.10+
 """
 import re
 import sys
