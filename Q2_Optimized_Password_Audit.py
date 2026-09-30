@@ -3,96 +3,126 @@ Q2 - Optimized Password Audit with Pattern Constraints
 """
 from collections import deque
 
-class AhoCorasick:
-    def __init__(self, words):
-        self.next = [{}]
-        self.fail = [0]
-        self.output = [False]
+#  Trie Node 
+class Node:
+    def __init__(self):
+        self.children = {}
+        self.fail = 0
+        self.output = False
 
-        for word in words:
-            node = 0
-            for ch in word.lower():
-                if ch not in self.next[node]:
-                    self.next[node][ch] = len(self.next)
-                    self.next.append({})
-                    self.fail.append(0)
-                    self.output.append(False)
-                node = self.next[node][ch]
-            self.output[node] = True
 
-        q = deque()
-        for child in self.next[0].values():
-            q.append(child)
+#  Build Trie 
+b = int(input())
 
-        while q:
-            u = q.popleft()
-            for ch, v in self.next[u].items():
-                q.append(v)
-                f = self.fail[u]
-                while f and ch not in self.next[f]:
-                    f = self.fail[f]
-                self.fail[v] = self.next[f].get(ch, 0)
-                self.output[v] = self.output[v] or self.output[self.fail[v]]
+trie = [Node()]
 
-    def contains_banned(self, text):
-        node = 0
-        for ch in text.lower():
-            while node and ch not in self.next[node]:
-                node = self.fail[node]
-            node = self.next[node].get(ch, 0)
-            if self.output[node]:
-                return True
-        return False
+for _ in range(b):
+    word = input().strip().lower()
 
-def has_required_pattern(password):
-    return (
-        any(c.islower() for c in password)
-        and any(c.isupper() for c in password)
-        and any(c.isdigit() for c in password)
-        and any(c in "$#@" for c in password)
-    )
+    current = 0
 
-def repeated_more_than_three(password):
-    if not password:
-        return False
-    run = 1
-    for i in range(1, len(password)):
-        if password[i] == password[i - 1]:
-            run += 1
-            if run > 3:
-                return True
+    for ch in word:
+        if ch not in trie[current].children:
+            trie[current].children[ch] = len(trie)
+            trie.append(Node())
+
+        current = trie[current].children[ch]
+
+    trie[current].output = True
+
+
+#  Build Failure Links 
+queue = deque()
+
+# Root's direct children
+for child in trie[0].children.values():
+    trie[child].fail = 0
+    queue.append(child)
+
+while queue:
+    current = queue.popleft()
+
+    for ch, child in trie[current].children.items():
+        queue.append(child)
+
+        failure = trie[current].fail
+
+        while failure != 0 and ch not in trie[failure].children:
+            failure = trie[failure].fail
+
+        if ch in trie[failure].children:
+            trie[child].fail = trie[failure].children[ch]
         else:
-            run = 1
-    return False
+            trie[child].fail = 0
 
-def main():
-    b = int(input().strip())
-    if not 1 <= b <= 10000:
-        raise ValueError("Invalid number of banned words.")
+        # If failure state represents a banned word,
+        # this state also represents a banned word.
+        trie[child].output |= trie[trie[child].fail].output
 
-    banned = [input().rstrip("\n") for _ in range(b)]
-    if any(not word for word in banned):
-        raise ValueError("Banned words cannot be empty.")
 
-    automaton = AhoCorasick(banned)
+#  Password Validation 
+n = int(input())
 
-    n = int(input().strip())
-    if not 1 <= n <= 100000:
-        raise ValueError("Invalid number of passwords.")
+for index in range(1, n + 1):
+    password = input().rstrip("\n")
 
-    for i in range(1, n + 1):
-        password = input().rstrip("\n")
+    # 1. Length check
+    if len(password) < 6 or len(password) > 12:
+        print(f"{index}: WEAK_LENGTH")
+        continue
 
-        if not 6 <= len(password) <= 12:
-            result = "WEAK_LENGTH"
-        elif automaton.contains_banned(password):
-            result = "COMPROMISED"
-        elif repeated_more_than_three(password) or not has_required_pattern(password):
-            result = "WEAK_PATTERN"
+    # 2. Pattern check
+    has_lower = False
+    has_upper = False
+    has_digit = False
+    has_special = False
+    repeated = False
+
+    previous = None
+    count = 0
+
+    for ch in password:
+        if ch.islower():
+            has_lower = True
+        elif ch.isupper():
+            has_upper = True
+        elif ch.isdigit():
+            has_digit = True
+        elif ch in "$#@":
+            has_special = True
+
+        # Same character more than 3 times consecutively
+        if ch == previous:
+            count += 1
         else:
-            result = "STRONG"
+            previous = ch
+            count = 1
 
-        print(f"{i}: {result}")
+        if count > 3:
+            repeated = True
 
-if __name__ == "__main__":
-    main()
+    if not (has_lower and has_upper and has_digit and has_special) or repeated:
+        print(f"{index}: WEAK_PATTERN")
+        continue
+
+    # 3. Check banned words using Aho-Corasick
+    current = 0
+    compromised = False
+
+    for ch in password.lower():
+        while current != 0 and ch not in trie[current].children:
+            current = trie[current].fail
+
+        if ch in trie[current].children:
+            current = trie[current].children[ch]
+        else:
+            current = 0
+
+        if trie[current].output:
+            compromised = True
+            break
+
+    if compromised:
+        print(f"{index}: COMPROMISED")
+    else:
+        print(f"{index}: STRONG")
