@@ -1,9 +1,5 @@
 """
 Q1 - Campus Merit Analyzer using Compound Data Structures
-Problem Statement: You are given records of students in the form enrollment, name, semester, CPI and a list of subject marks. Build a
-program that stores the records using lists, tuples and dictionaries. For each semester, print the top K students by CPI. If CPI is the
-same, prefer the student with higher average marks; if still tied, prefer lexicographically smaller enrollment number. Also print the
-subject-wise topper for every subject code.
 """
 from collections import defaultdict
 
