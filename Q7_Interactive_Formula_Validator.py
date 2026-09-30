@@ -1,10 +1,10 @@
 """
 Q7 - Interactive Formula Validator with Custom Exceptions
-Python 3.10+
 """
 import re
 
 class FormulaError(Exception):
+    """Base class for formula-related errors."""
     pass
 
 class InvalidFormatError(FormulaError):
@@ -19,91 +19,170 @@ class DivisionByZeroError(FormulaError):
 class UnsupportedOperatorError(FormulaError):
     pass
 
-NUMBER = r"(?:[+-]?(?:\d+(?:\.\d*)?|\.\d+))"
-IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
-TOKEN = re.compile(rf"^\s*({NUMBER}|{IDENT})\s*([+\-*/%])\s*({NUMBER}|{IDENT})\s*$")
-ASSIGN = re.compile(rf"^\s*({IDENT})\s*=\s*({NUMBER})\s*$")
+class Calculator:
 
-def to_number(token, variables):
+    def __init__(self):
+        self.variables = {}
+
+    def get_value(self, operand):
+
+        # Integer or decimal
+        try:
+            return float(operand)
+        except ValueError:
+            pass
+
+        # Variable
+        if operand in self.variables:
+            return self.variables[operand]
+
+        raise UnknownVariableError(
+            f"Unknown variable: {operand}"
+        )
+
+    def evaluate(self, left, operator, right):
+
+        left_value = self.get_value(left)
+        right_value = self.get_value(right)
+
+        if operator not in {"+", "-", "*", "/", "%"}:
+            raise UnsupportedOperatorError(
+                f"Unsupported operator: {operator}"
+            )
+
+        if operator in {"/", "%"} and right_value == 0:
+            raise DivisionByZeroError(
+                "Division by zero is not allowed"
+            )
+
+        if operator == "+":
+            return left_value + right_value
+
+        elif operator == "-":
+            return left_value - right_value
+
+        elif operator == "*":
+            return left_value * right_value
+
+        elif operator == "/":
+            return left_value / right_value
+
+        elif operator == "%":
+            return left_value % right_value
+
+    def process(self, line):
+
+        line = line.strip()
+
+        if not line:
+            raise InvalidFormatError("Empty formula")
+
+    
+        if "=" in line:
+
+            parts = line.split("=")
+
+            if len(parts) != 2:
+                raise InvalidFormatError(
+                    "Invalid assignment format"
+                )
+
+            variable = parts[0].strip()
+            expression = parts[1].strip()
+
+            # Python identifier rule
+            if not variable.isidentifier():
+                raise InvalidFormatError(
+                    f"Invalid variable name: {variable}"
+                )
+
+            # Assignment of a single value/variable
+            if re.fullmatch(
+                r"[+-]?(?:\d+(?:\.\d*)?|\.\d+|[A-Za-z_]\w*)",
+                expression
+            ):
+                value = self.get_value(expression)
+
+            else:
+                # Assignment containing a formula
+                match = re.fullmatch(
+                    r"\s*(\S+)\s*([+\-*/%]+)\s*(\S+)\s*",
+                    expression
+                )
+
+                if not match:
+                    raise InvalidFormatError(
+                        "Invalid assignment expression"
+                    )
+
+                left, operator, right = match.groups()
+
+                if operator not in {"+", "-", "*", "/", "%"}:
+                    raise UnsupportedOperatorError(
+                        f"Unsupported operator: {operator}"
+                    )
+
+                value = self.evaluate(
+                    left,
+                    operator,
+                    right
+                )
+
+            self.variables[variable] = value
+            return None
+            
+        match = re.fullmatch(
+            r"\s*(\S+)\s*([+\-*/%]+)\s*(\S+)\s*",
+            line
+        )
+
+        if not match:
+            raise InvalidFormatError(
+                "Expected: operand operator operand"
+            )
+
+        left, operator, right = match.groups()
+
+        if operator not in {"+", "-", "*", "/", "%"}:
+            raise UnsupportedOperatorError(
+                f"Unsupported operator: {operator}"
+            )
+
+        return self.evaluate(
+            left,
+            operator,
+            right
+        )
+
+calculator = Calculator()
+
+while True:
+
     try:
-        if re.fullmatch(NUMBER, token):
-            return float(token)
-    except ValueError:
-        raise InvalidFormatError("Invalid numeric value.")
+        line = input().strip()
 
-    if token in variables:
-        return variables[token]
-    raise UnknownVariableError(f"Unknown variable: {token}")
+    except EOFError:
+        break
 
-def format_number(value):
-    if value == int(value):
-        return str(int(value))
-    return str(value)
+    if line.lower() == "quit":
+        break
 
-def evaluate(line, variables):
-    match = TOKEN.match(line)
-    if not match:
-        if re.search(r"//|\*\*|[<>^&|]", line):
-            raise UnsupportedOperatorError("Only +, -, *, / and % are supported.")
-        raise InvalidFormatError("Expected: operand operator operand.")
+    try:
+        result = calculator.process(line)
 
-    left, op, right = match.groups()
-    a = to_number(left, variables)
-    b = to_number(right, variables)
+        # Assignment does not print a result.
+        if result is not None:
 
-    if op in {"/", "%"} and b == 0:
-        raise DivisionByZeroError("Division by zero is not allowed.")
+            # Print integer values without .0
+            if result.is_integer():
+                print(int(result))
+            else:
+                print(result)
 
-    if op == "+":
-        return a + b
-    if op == "-":
-        return a - b
-    if op == "*":
-        return a * b
-    if op == "/":
-        return a / b
-    if op == "%":
-        return a % b
+    except FormulaError as e:
+        print(type(e).__name__)
 
-    raise UnsupportedOperatorError(f"Unsupported operator: {op}")
-
-def main():
-    variables = {}
-
-    while True:
-        try:
-            line = input()
-        except EOFError:
-            break
-
-        if line.strip().lower() == "quit":
-            break
-        if not line.strip():
-            continue
-
-        try:
-            assignment = ASSIGN.match(line)
-            if assignment:
-                name, value = assignment.groups()
-                variables[name] = float(value)
-                continue
-
-            # A valid variable assignment with a formula is also accepted.
-            if "=" in line:
-                left, expr = line.split("=", 1)
-                left = left.strip()
-                if not re.fullmatch(IDENT, left):
-                    raise InvalidFormatError("Invalid variable name.")
-                value = evaluate(expr, variables)
-                variables[left] = value
-                continue
-
-            result = evaluate(line, variables)
-            print(format_number(result))
-
-        except FormulaError as exc:
-            print(type(exc).__name__)
-            print(str(exc))
-
-if __name__ == "__main__":
-    main()
+    except Exception as e:
+        # Safety net: calculator should never terminate
+        # because of a single malformed input.
+        print(type(e).__name__)
