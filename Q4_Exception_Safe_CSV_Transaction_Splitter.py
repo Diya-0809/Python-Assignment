@@ -1,94 +1,146 @@
 """
 Q4 - Exception-Safe CSV Transaction Splitter
-Python 3.10+
 """
 import csv
-import re
-from collections import defaultdict
+import sys
 from datetime import datetime
+from collections import defaultdict
 
-TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
+def validate_row(row, line_number):
+    required_fields = ["tid", "acc", "type", "amount", "time"]
 
-def validate(row):
-    required = ["tid", "acc", "type", "amount", "time"]
-    if any(key not in row for key in required):
-        raise ValueError("missing column")
+    # Check missing fields
+    for field in required_fields:
+        if field not in row or row[field].strip() == "":
+            raise ValueError(f"Missing {field}")
 
-    if not row["tid"].strip():
-        raise ValueError("empty transaction_id")
-    if not row["acc"].strip():
-        raise ValueError("empty account_id")
+    tid = row["tid"].strip()
+    acc = row["acc"].strip()
+    trans_type = row["type"].strip().upper()
+    amount_text = row["amount"].strip()
+    timestamp = row["time"].strip()
 
-    kind = row["type"].strip().upper()
-    if kind not in {"CREDIT", "DEBIT"}:
-        raise ValueError("invalid type")
+    # Validate transaction type
+    if trans_type not in ("CREDIT", "DEBIT"):
+        raise ValueError("Invalid transaction type")
 
+    # Validate amount
     try:
-        amount = float(row["amount"])
-    except (ValueError, TypeError):
-        raise ValueError("amount is not numeric")
+        amount = float(amount_text)
+    except ValueError:
+        raise ValueError("Amount is not numeric")
 
     if amount <= 0:
-        raise ValueError("amount must be greater than zero")
+        raise ValueError("Amount must be greater than 0")
 
-    timestamp = row["time"].strip()
-    if not TIME_RE.fullmatch(timestamp):
-        raise ValueError("invalid timestamp format")
+    # Validate timestamp
     try:
         datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S")
     except ValueError:
-        raise ValueError("invalid timestamp")
+        raise ValueError("Invalid timestamp")
 
-    return kind, amount
+    return {
+        "tid": tid,
+        "acc": acc,
+        "type": trans_type,
+        "amount": amount,
+        "time": timestamp
+    }
 
-def main():
-    path = input().strip()
+def process_file(input_file):
+    # Account -> net balance change
     balances = defaultdict(float)
 
-    with open(path, "r", newline="", encoding="utf-8") as source:
-        reader = csv.DictReader(source)
-        if reader.fieldnames is None:
-            raise ValueError("CSV has no header")
+    with open(input_file, "r", newline="", encoding="utf-8") as infile, \
+         open("credit.csv", "w", newline="", encoding="utf-8") as credit_file, \
+         open("debit.csv", "w", newline="", encoding="utf-8") as debit_file, \
+         open("error.csv", "w", newline="", encoding="utf-8") as error_file:
 
-        headers = reader.fieldnames
-        output_headers = list(headers)
+        reader = csv.DictReader(infile)
 
-        with open("credit.csv", "w", newline="", encoding="utf-8") as cf, \
-             open("debit.csv", "w", newline="", encoding="utf-8") as df, \
-             open("error.csv", "w", newline="", encoding="utf-8") as ef:
+        # Output writers
+        output_fields = ["tid", "acc", "type", "amount", "time"]
 
-            credit_writer = csv.DictWriter(cf, fieldnames=output_headers)
-            debit_writer = csv.DictWriter(df, fieldnames=output_headers)
-            error_writer = csv.DictWriter(
-                ef, fieldnames=output_headers + ["reason"]
-            )
-            credit_writer.writeheader()
-            debit_writer.writeheader()
-            error_writer.writeheader()
+        credit_writer = csv.DictWriter(
+            credit_file,
+            fieldnames=output_fields
+        )
 
-            for row in reader:
-                try:
-                    kind, amount = validate(row)
-                    if kind == "CREDIT":
-                        credit_writer.writerow(row)
-                        balances[row["acc"]] += amount
-                    else:
-                        debit_writer.writerow(row)
-                        balances[row["acc"]] -= amount
-                except (ValueError, KeyError, TypeError) as exc:
-                    error_row = dict(row)
-                    error_row["reason"] = str(exc)
-                    error_writer.writerow(error_row)
+        debit_writer = csv.DictWriter(
+            debit_file,
+            fieldnames=output_fields
+        )
 
-    for account, balance in sorted(
-        balances.items(), key=lambda x: (-abs(x[1]), x[0])
-    ):
+        error_fields = output_fields + ["reason"]
+
+        error_writer = csv.DictWriter(
+            error_file,
+            fieldnames=error_fields
+        )
+
+        # Write headers
+        credit_writer.writeheader()
+        debit_writer.writeheader()
+        error_writer.writeheader()
+
+        # Process every row independently
+        for line_number, row in enumerate(reader, start=2):
+
+            try:
+                transaction = validate_row(row, line_number)
+
+                # Valid CREDIT
+                if transaction["type"] == "CREDIT":
+                    credit_writer.writerow(transaction)
+                    balances[transaction["acc"]] += transaction["amount"]
+
+                # Valid DEBIT
+                else:
+                    debit_writer.writerow(transaction)
+                    balances[transaction["acc"]] -= transaction["amount"]
+
+            except Exception as e:
+                # Preserve original row values
+                error_row = {
+                    "tid": row.get("tid", ""),
+                    "acc": row.get("acc", ""),
+                    "type": row.get("type", ""),
+                    "amount": row.get("amount", ""),
+                    "time": row.get("time", ""),
+                    "reason": str(e)
+                }
+
+                error_writer.writerow(error_row)
+
+    result = sorted(
+        balances.items(),
+        key=lambda x: (-abs(x[1]), x[0])
+    )
+
+    for account, balance in result:
+
+        # Avoid displaying unnecessary .0 for integer values
         if balance.is_integer():
-            print(account, int(balance))
-        else:
-            print(account, balance)
+            balance = int(balance)
 
-    print("Files created: credit.csv, debit.csv, error.csv")
+        print(account, balance)
 
 if __name__ == "__main__":
-    main()
+
+    if len(sys.argv) != 2:
+        print("Usage: python transaction_splitter.py <input_csv>")
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+
+    try:
+        process_file(input_file)
+
+    except FileNotFoundError:
+        print("ERROR: Input file not found")
+
+    except PermissionError:
+        print("ERROR: Permission denied")
+
+    except Exception as e:
+        print(f"ERROR: {e}")
