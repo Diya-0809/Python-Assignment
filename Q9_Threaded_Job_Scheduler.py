@@ -1,101 +1,194 @@
 """
 Q9 - Threaded Job Scheduler Simulation
-
-Interpretation used for the assignment:
-The statement supplies a resource count per job but does not specify worker
-resource capacities. Therefore each worker executes one job at a time; the
-resource count is validated and retained as job metadata, but does not limit
-assignment. Jobs are selected by highest priority, then earliest arrival.
-Python 3.10+
 """
-from dataclasses import dataclass
-from queue import PriorityQueue
-from threading import Lock, Thread
+import threading
 import heapq
 
-@dataclass
 class Job:
-    arrival: int
-    job_id: str
-    priority: int
-    duration: int
-    resources: int
-    sequence: int
-    start: int = -1
-    finish: int = -1
-    worker: int = -1
+    def __init__(self, arrival, job_id, priority, duration, resources, order):
+        self.arrival = arrival
+        self.job_id = job_id
+        self.priority = priority
+        self.duration = duration
+        self.resources = resources
+        self.order = order
 
-def simulate(workers, jobs):
-    # Event heap: (finish_time, worker_id)
-    available = list(range(1, workers + 1))
-    heapq.heapify(available)
+        self.start = -1
+        self.finish = -1
+        self.worker = -1
 
-    jobs_sorted = sorted(jobs, key=lambda j: (j.arrival, j.sequence))
-    waiting = []
-    events = []
-    result = []
+class Scheduler:
+    def __init__(self, workers, jobs):
+        self.workers = workers
+        self.jobs = jobs
 
-    i = 0
-    time = 0
+        self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
 
-    while i < len(jobs_sorted) or waiting or events:
-        if not waiting and not events and i < len(jobs_sorted):
-            time = max(time, jobs_sorted[i].arrival)
+        self.waiting = []
+        self.current_time = 0
 
-        while i < len(jobs_sorted) and jobs_sorted[i].arrival <= time:
-            job = jobs_sorted[i]
-            # Higher priority first; for ties earlier arrival, then input order.
-            heapq.heappush(waiting, (-job.priority, job.arrival, job.sequence, job))
-            i += 1
+        self.next_job = 0
+        self.completed = 0
 
-        # Complete all workers available at the current time.
-        while events and events[0][0] <= time:
-            finish, worker_id = heapq.heappop(events)
-            heapq.heappush(available, worker_id)
+        self.worker_available = [True] * workers
 
-        while available and waiting:
-            _, _, _, job = heapq.heappop(waiting)
-            worker_id = heapq.heappop(available)
-            job.start = time
-            job.finish = time + job.duration
-            job.worker = worker_id
-            result.append(job)
-            heapq.heappush(events, (job.finish, worker_id))
+    def add_arrived_jobs(self):
+        while (
+            self.next_job < len(self.jobs)
+            and self.jobs[self.next_job].arrival <= self.current_time
+        ):
+            job = self.jobs[self.next_job]
 
-        if events:
-            # Advance simulated time to the next worker completion.
-            # If more jobs arrive first, the loop will enqueue them at that time.
-            next_arrival = jobs_sorted[i].arrival if i < len(jobs_sorted) else float("inf")
-            time = min(events[0][0], next_arrival)
-        elif i < len(jobs_sorted):
-            time = max(time, jobs_sorted[i].arrival)
+            # Higher priority first.
+            # Earlier arrival first.
+            # Input order is used as final tie-breaker.
+            heapq.heappush(
+                self.waiting,
+                (
+                    -job.priority,
+                    job.arrival,
+                    job.order,
+                    job
+                )
+            )
 
-    return result
+            self.next_job += 1
+            
+    def get_free_worker(self):
+        for i in range(self.workers):
+            if self.worker_available[i]:
+                return i
 
-def main():
-    w, n = map(int, input().split())
-    if not (1 <= w <= 64 and 1 <= n <= 200000):
-        raise ValueError("Invalid worker/job count.")
+        return -1
+        
+    def worker_run(self, worker_id):
 
-    jobs = []
-    for seq in range(n):
-        arrival, job_id, priority, duration, resources = input().split()
-        job = Job(
-            int(arrival), job_id, int(priority), int(duration),
-            int(resources), seq
-        )
-        if job.arrival < 0 or job.duration <= 0 or job.resources <= 0:
-            raise ValueError("Invalid job fields.")
-        jobs.append(job)
+        while True:
 
-    finished = simulate(w, jobs)
+            with self.condition:
 
-    # Report in actual execution/start order.
-    for job in sorted(finished, key=lambda j: (j.start, j.worker, j.sequence)):
-        print(job.job_id, f"W{job.worker}", job.start, job.finish)
+                while True:
 
-    avg_wait = sum(job.start - job.arrival for job in finished) / n
-    print(f"AVG_WAIT {avg_wait:.2f}")
+                    # Add jobs that have arrived.
+                    self.add_arrived_jobs()
 
-if __name__ == "__main__":
-    main()
+                    # Everything completed.
+                    if self.completed == len(self.jobs):
+                        return
+
+                    # Find a free job for this worker.
+                    if self.waiting and self.worker_available[worker_id]:
+
+                        _, _, _, job = heapq.heappop(self.waiting)
+
+                        self.worker_available[worker_id] = False
+
+                        # A job cannot start before its arrival.
+                        self.current_time = max(
+                            self.current_time,
+                            job.arrival
+                        )
+
+                        job.start = self.current_time
+                        job.worker = worker_id + 1
+                        job.finish = (
+                            job.start + job.duration
+                        )
+
+                        break
+
+                    # No currently executable job.
+                    # Advance simulated time to the next arrival
+                    # if no waiting jobs exist.
+                    if not self.waiting and self.next_job < len(self.jobs):
+
+                        next_arrival = self.jobs[
+                            self.next_job
+                        ].arrival
+
+                        if next_arrival > self.current_time:
+                            self.current_time = next_arrival
+
+                            self.add_arrived_jobs()
+                            continue
+
+                    self.condition.wait()
+
+            with self.condition:
+
+                self.current_time = max(
+                    self.current_time,
+                    job.finish
+                )
+
+                self.worker_available[worker_id] = True
+                self.completed += 1
+
+                self.condition.notify_all()
+
+# Main
+w, n = map(int, input().split())
+
+jobs = []
+
+for order in range(n):
+
+    arrival, job_id, priority, duration, resources = input().split()
+
+    job = Job(
+        int(arrival),
+        job_id,
+        int(priority),
+        int(duration),
+        int(resources),
+        order
+    )
+
+    jobs.append(job)
+
+
+# Sort by arrival time.
+jobs.sort(
+    key=lambda job: (job.arrival, job.order)
+)
+
+scheduler = Scheduler(w, jobs)
+
+threads = []
+
+for worker_id in range(w):
+
+    thread = threading.Thread(
+        target=scheduler.worker_run,
+        args=(worker_id,)
+    )
+
+    thread.start()
+    threads.append(thread)
+
+
+for thread in threads:
+    thread.join()
+
+# Output in job arrival/input order.
+jobs.sort(key=lambda job: job.order)
+
+total_waiting = 0
+
+for job in jobs:
+
+    waiting_time = job.start - job.arrival
+    total_waiting += waiting_time
+
+    print(
+        job.job_id,
+        f"W{job.worker}",
+        job.start,
+        job.finish
+    )
+
+
+average_wait = total_waiting / n
+
+print(f"AVG_WAIT {average_wait:.2f}")
