@@ -1,129 +1,192 @@
 """
 Q3 - Recursive Expression Engine with Memoization
 """
-import re
 import sys
+
 sys.setrecursionlimit(1_000_000)
 
-NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+v = int(input())
 
-class InvalidExpression(Exception):
-    pass
+definitions = {}
 
-class CycleDetected(Exception):
-    pass
+for _ in range(v):
+    line = input().strip()
+
+    if "=" not in line:
+        continue
+
+    name, expr = line.split("=", 1)
+    name = name.strip()
+    expr = expr.strip()
+
+    definitions[name] = expr
+
+target = input().strip()
 
 class Parser:
-    def __init__(self, text, resolver):
+    def __init__(self, text, resolve_variable):
         self.text = text
-        self.i = 0
-        self.resolver = resolver
+        self.n = len(text)
+        self.pos = 0
+        self.resolve_variable = resolve_variable
 
-    def skip(self):
-        while self.i < len(self.text) and self.text[self.i].isspace():
-            self.i += 1
+    def skip_spaces(self):
+        while self.pos < self.n and self.text[self.pos].isspace():
+            self.pos += 1
 
     def parse(self):
-        value = self.expression()
-        self.skip()
-        if self.i != len(self.text):
-            raise InvalidExpression()
+        self.skip_spaces()
+
+        if self.pos >= self.n:
+            raise ValueError("Invalid expression")
+
+        value = self.parse_expression()
+
+        self.skip_spaces()
+
+        # Extra characters mean invalid syntax
+        if self.pos != self.n:
+            raise ValueError("Invalid expression")
+
         return value
 
-    def expression(self):
-        value = self.term()
+    def parse_expression(self):
+        value = self.parse_term()
+
         while True:
-            self.skip()
-            if self.i >= len(self.text) or self.text[self.i] not in "+-":
-                return value
-            op = self.text[self.i]
-            self.i += 1
-            rhs = self.term()
-            value = value + rhs if op == "+" else value - rhs
+            self.skip_spaces()
 
-    def term(self):
-        value = self.factor()
+            if self.pos >= self.n:
+                break
+
+            op = self.text[self.pos]
+
+            if op not in "+-":
+                break
+
+            self.pos += 1
+            right = self.parse_term()
+
+            if op == "+":
+                value += right
+            else:
+                value -= right
+
+        return value
+
+    def parse_term(self):
+        value = self.parse_factor()
+
         while True:
-            self.skip()
-            if self.i >= len(self.text) or self.text[self.i] != "*":
-                return value
-            self.i += 1
-            value *= self.factor()
+            self.skip_spaces()
 
-    def factor(self):
-        self.skip()
-        if self.i >= len(self.text):
-            raise InvalidExpression()
+            if self.pos >= self.n or self.text[self.pos] != "*":
+                break
 
-        ch = self.text[self.i]
+            self.pos += 1
+            right = self.parse_factor()
 
-        if ch.isdigit():
-            start = self.i
-            while self.i < len(self.text) and self.text[self.i].isdigit():
-                self.i += 1
-            return int(self.text[start:self.i])
+            value *= right
 
+        return value
+
+    def parse_factor(self):
+        self.skip_spaces()
+
+        if self.pos >= self.n:
+            raise ValueError("Invalid expression")
+
+        ch = self.text[self.pos]
+
+        # Parenthesized expression
         if ch == "(":
-            self.i += 1
-            value = self.expression()
-            self.skip()
-            if self.i >= len(self.text) or self.text[self.i] != ")":
-                raise InvalidExpression()
-            self.i += 1
+            self.pos += 1
+
+            value = self.parse_expression()
+
+            self.skip_spaces()
+
+            if self.pos >= self.n or self.text[self.pos] != ")":
+                raise ValueError("Missing ')'")
+
+            self.pos += 1
             return value
 
-        match = NAME.match(self.text, self.i)
-        if match:
-            name = match.group()
-            self.i = match.end()
-            return self.resolver(name)
+        # Non-negative integer
+        if ch.isdigit():
+            start = self.pos
 
-        raise InvalidExpression()
+            while self.pos < self.n and self.text[self.pos].isdigit():
+                self.pos += 1
 
-def main():
-    v = int(input().strip())
-    if not 1 <= v <= 200000:
-        raise ValueError("Invalid variable count.")
+            return int(self.text[start:self.pos])
 
-    definitions = {}
-    for _ in range(v):
-        line = input()
-        if "=" not in line:
-            raise ValueError("Invalid variable definition.")
-        name, expr = line.split("=", 1)
-        name = name.strip()
-        if not NAME.fullmatch(name):
-            raise ValueError("Invalid variable name.")
-        definitions[name] = expr
+        # Variable name
+        if ch.isalpha() or ch == "_":
+            start = self.pos
 
-    target = input()
+            while (
+                self.pos < self.n
+                and (self.text[self.pos].isalnum() or self.text[self.pos] == "_")
+            ):
+                self.pos += 1
 
-    memo = {}
-    active = set()
+            name = self.text[start:self.pos]
 
-    def evaluate_variable(name):
-        if name not in definitions:
-            raise InvalidExpression()
-        if name in memo:
-            return memo[name]
-        if name in active:
-            raise CycleDetected()
+            return self.resolve_variable(name)
 
-        active.add(name)
-        try:
-            value = Parser(definitions[name], evaluate_variable).parse()
-            memo[name] = value
-            return value
-        finally:
-            active.remove(name)
+        raise ValueError("Invalid character")
+
+state = {}
+memo = {}
+
+CYCLE = False
+
+
+def evaluate_variable(name):
+    global CYCLE
+
+    # Undefined variable
+    if name not in definitions:
+        raise ValueError("Undefined variable")
+
+    # Already calculated
+    if state.get(name, 0) == 2:
+        return memo[name]
+
+    # Currently on recursion stack => cycle
+    if state.get(name, 0) == 1:
+        CYCLE = True
+        raise RuntimeError("CYCLE")
+
+    state[name] = 1
 
     try:
-        answer = Parser(target, evaluate_variable).parse()
-        print(answer)
-    except CycleDetected:
-        print("CYCLE")
-    except (InvalidExpression, RecursionError):
-        print("INVALID")
+        parser = Parser(definitions[name], evaluate_variable)
+        value = parser.parse()
 
-if __name__ == "__main__":
-    main()
+        memo[name] = value
+        state[name] = 2
+
+        return value
+
+    except RuntimeError:
+        raise
+
+    except Exception:
+        raise ValueError("Invalid expression")
+
+try:
+    parser = Parser(target, evaluate_variable)
+    answer = parser.parse()
+
+    if CYCLE:
+        print("CYCLE")
+    else:
+        print(answer)
+
+except RuntimeError:
+    print("CYCLE")
+
+except Exception:
+    print("INVALID")
