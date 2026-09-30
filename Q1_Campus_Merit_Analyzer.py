@@ -1,53 +1,51 @@
 """
 Q1 - Campus Merit Analyzer using Compound Data Structures
-Python 3.10+
 """
 from collections import defaultdict
 
-def main():
-    first = input().split()
-    if len(first) != 3:
-        raise ValueError("First line must contain n, k and m.")
-    n, k, m = map(int, first)
-    if not (1 <= n <= 100000 and 1 <= k <= 50 and 1 <= m <= 12):
-        raise ValueError("n, k or m is outside the allowed range.")
+n, k, m = map(int, input().split())
 
-    # tuple: (enrollment, name, semester, cpi, marks)
-    students = []
-    by_semester = defaultdict(list)
+# semester -> list of student tuples
+students = defaultdict(list)
 
-    for _ in range(n):
-        parts = input().split()
-        if len(parts) != 4 + m:
-            raise ValueError("Each student row must contain 4 fields plus m marks.")
-        enrollment, name = parts[0], parts[1]
-        semester = int(parts[2])
-        cpi = float(parts[3])
-        marks = tuple(map(int, parts[4:]))
+# subject -> maximum mark and corresponding enrollments
+subject_top = [{"mark": -1, "enrollments": []} for _ in range(m)]
 
-        if not (1 <= semester <= 8 and 0 <= cpi <= 10):
-            raise ValueError("Invalid semester or CPI.")
-        if any(not 0 <= x <= 100 for x in marks):
-            raise ValueError("Marks must be between 0 and 100.")
+for _ in range(n):
+    data = input().split()
+    enrollment = data[0]
+    name = data[1]
+    semester = int(data[2])
+    cpi = float(data[3])
+    marks = list(map(int, data[4:]))
 
-        student = (enrollment, name, semester, cpi, marks)
-        students.append(student)
-        by_semester[semester].append(student)
+    avg = sum(marks) / m
 
-    # Higher CPI, then higher average marks, then lexicographically smaller enrollment.
-    def student_key(s):
-        enrollment, _, _, cpi, marks = s
-        return (-cpi, -sum(marks) / len(marks), enrollment)
+    # Store as tuple: (enrollment, name, cpi, average, marks)
+    students[semester].append(
+        (enrollment, name, cpi, avg, marks)
+    )
 
-    for semester in sorted(by_semester):
-        ranked = sorted(by_semester[semester], key=student_key)
-        print(f"Semester {semester}:", *[s[0] for s in ranked[:k]])
+    # Find subject-wise toppers
+    for i, mark in enumerate(marks):
+        if mark > subject_top[i]["mark"]:
+            subject_top[i]["mark"] = mark
+            subject_top[i]["enrollments"] = [enrollment]
+        elif mark == subject_top[i]["mark"]:
+            subject_top[i]["enrollments"].append(enrollment)
 
-    # Subject-wise topper(s): all students tied at the maximum mark.
-    for j in range(m):
-        best = max(s[4][j] for s in students)
-        toppers = sorted(s[0] for s in students if s[4][j] == best)
-        print(f"S{j + 1}:", *toppers)
+for semester in sorted(students):
+    # Higher CPI -> higher average marks -> smaller enrollment
+    students[semester].sort(
+        key=lambda x: (-x[2], -x[3], x[0])
+    )
 
-if __name__ == "__main__":
-    main()
+    top_k = students[semester][:k]
+    enrollments = [student[0] for student in top_k]
+
+    print(f"Semester {semester}: {' '.join(enrollments)}")
+
+# Subject-wise toppers
+for i in range(m):
+    toppers = sorted(subject_top[i]["enrollments"])
+    print(f"S{i + 1}: {' '.join(toppers)}")
