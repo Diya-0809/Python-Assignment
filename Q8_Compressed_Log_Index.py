@@ -1,84 +1,241 @@
 """
 Q8 - Compressed Log Index using Pickle and Zip
-Python 3.10+
 """
 import os
-import pickle
 import re
-import sys
+import pickle
 import zipfile
-from collections import defaultdict
-from pathlib import Path
+import sys
 
-TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+")
 
-def build_index(folder, zip_name):
-    folder = Path(folder)
-    if not folder.is_dir():
-        raise ValueError("Folder does not exist.")
+def tokenize(line):
+    """Return lowercase normalized tokens from a line."""
+    return set(
+        token.lower()
+        for token in TOKEN_PATTERN.findall(line)
+    )
 
-    index = defaultdict(list)
+def build_index(folder_path, zip_name):
+    """Build inverted index and create ZIP archive."""
+
+    if not os.path.isdir(folder_path):
+        raise FileNotFoundError(
+            f"Folder not found: {folder_path}"
+        )
+
+    index = {}
+
     total_files = 0
     total_lines = 0
-    source_files = []
 
-    for path in sorted(folder.iterdir()):
-        if not path.is_file():
-            continue
+    files = []
+
+    for root, dirs, filenames in os.walk(folder_path):
+        for filename in filenames:
+
+            full_path = os.path.join(root, filename)
+
+            if os.path.isfile(full_path):
+                files.append(full_path)
+
+    files.sort()
+
+    for file_path in files:
 
         total_files += 1
-        source_files.append(path)
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            for line_no, line in enumerate(f, 1):
-                total_lines += 1
-                for token in set(TOKEN_RE.findall(line.lower())):
-                    index[token].append((path.name, line_no))
 
-    pickle_path = folder / "_log_index.pkl"
-    with pickle_path.open("wb") as f:
-        pickle.dump(dict(index), f, protocol=pickle.HIGHEST_PROTOCOL)
+        # Store filename relative to the input folder
+        relative_path = os.path.relpath(
+            file_path,
+            folder_path
+        )
 
-    with zipfile.ZipFile(zip_name, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        for path in source_files:
-            z.write(path, arcname=path.name)
-        z.write(pickle_path, arcname="log_index.pkl")
+        try:
+            with open(
+                file_path,
+                "r",
+                encoding="utf-8",
+                errors="replace"
+            ) as file:
 
-    pickle_path.unlink()
+                for line_number, line in enumerate(
+                    file,
+                    start=1
+                ):
+                    total_lines += 1
+
+                    tokens = tokenize(line)
+
+                    for token in tokens:
+
+                        if token not in index:
+                            index[token] = []
+
+                        index[token].append(
+                            (relative_path, line_number)
+                        )
+
+        except OSError:
+            # Skip files that cannot be read
+            continue
+
+    pickle_name = "log_index.pkl"
+
+    with open(
+        pickle_name,
+        "wb"
+    ) as file:
+
+        pickle.dump(
+            index,
+            file,
+            protocol=pickle.HIGHEST_PROTOCOL
+        )
+
+    with zipfile.ZipFile(
+        zip_name,
+        "w",
+        compression=zipfile.ZIP_DEFLATED
+    ) as archive:
+
+        # Add original log files
+        for file_path in files:
+
+            if os.path.abspath(file_path) == os.path.abspath(zip_name):
+                continue
+
+            relative_path = os.path.relpath(
+                file_path,
+                folder_path
+            )
+
+            archive.write(
+                file_path,
+                arcname=relative_path
+            )
+
+        # Add pickle index
+        archive.write(
+            pickle_name,
+            arcname=pickle_name
+        )
+
     print("FILES", total_files)
     print("LINES", total_lines)
     print("TOKENS", len(index))
 
-def search_index(pickle_path, queries):
-    with open(pickle_path, "rb") as f:
-        index = pickle.load(f)
 
-    for token in queries:
-        matches = index.get(token.lower(), [])
-        for filename, line_no in matches:
-            print(f"{token}: {filename}:{line_no}")
+def search_index(pickle_path, queries):
+    """Load pickle index and search tokens."""
+
+    if not os.path.isfile(pickle_path):
+        raise FileNotFoundError(
+            f"Pickle file not found: {pickle_path}"
+        )
+
+    with open(
+        pickle_path,
+        "rb"
+    ) as file:
+
+        index = pickle.load(file)
+
+    for query in queries:
+
+        token = query.lower()
+
+        matches = index.get(token, [])
+
+        print(token + ":")
+
+        for filename, line_number in matches:
+            print(
+                f"{filename}:{line_number}"
+            )
+
 
 def main():
-    mode = input().strip().upper()
+
+    first_line = input().strip()
+
+    if not first_line:
+        return
+
+    parts = first_line.split()
+
+    mode = parts[0].upper()
 
     if mode == "BUILD":
-        parts = input().split()
-        if len(parts) != 2:
-            raise ValueError("BUILD requires: folder_path zip_name")
-        build_index(parts[0], parts[1])
+
+        if len(parts) != 3:
+            print("INVALID")
+            return
+
+        folder_path = parts[1]
+        zip_name = parts[2]
+
+        try:
+            build_index(
+                folder_path,
+                zip_name
+            )
+
+        except Exception as e:
+            print(
+                "ERROR:",
+                type(e).__name__,
+                str(e)
+            )
 
     elif mode == "SEARCH":
-        parts = input().split()
-        if len(parts) < 2:
-            raise ValueError("SEARCH requires: pickle_path q [tokens...]")
-        pickle_path = parts[0]
-        q = int(parts[1])
-        queries = parts[2:]
-        if len(queries) != q:
-            raise ValueError("Query count does not match q.")
-        search_index(pickle_path, queries)
+
+        if len(parts) != 3:
+            print("INVALID")
+            return
+
+        pickle_path = parts[1]
+
+        try:
+            q = int(parts[2])
+        except ValueError:
+            print("INVALID")
+            return
+
+        if q < 0:
+            print("INVALID")
+            return
+
+        queries = []
+
+        while len(queries) < q:
+
+            try:
+                line = input().strip()
+            except EOFError:
+                break
+
+            if line:
+                queries.extend(line.split())
+
+        queries = queries[:q]
+
+        try:
+            search_index(
+                pickle_path,
+                queries
+            )
+
+        except Exception as e:
+            print(
+                "ERROR:",
+                type(e).__name__,
+                str(e)
+            )
 
     else:
-        raise ValueError("Mode must be BUILD or SEARCH.")
+        print("INVALID")
+
 
 if __name__ == "__main__":
     main()
