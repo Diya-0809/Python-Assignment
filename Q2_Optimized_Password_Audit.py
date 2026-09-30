@@ -1,6 +1,5 @@
 """
 Q2 - Optimized Password Audit with Pattern Constraints
-Uses Aho-Corasick for efficient banned-word detection.
 """
 from collections import deque
 
